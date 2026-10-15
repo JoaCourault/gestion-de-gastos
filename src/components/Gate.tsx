@@ -1,6 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useState, type ReactNode } from 'react'
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native'
+import { View } from 'react-native'
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 
 import { Button, Field, Input, Panel, Segmented, Txt } from '@/components/ui'
 import { signIn, signUp } from '@/lib/auth'
@@ -9,14 +10,14 @@ import { space, useTheme } from '@/lib/theme'
 function Centered({ children }: { children: ReactNode }) {
   const t = useTheme()
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: t.bg }}>
-      <ScrollView
-        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: space.lg }}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: space.lg }}>{children}</View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    <KeyboardAwareScrollView
+      style={{ flex: 1, backgroundColor: t.bg }}
+      contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: space.lg }}
+      keyboardShouldPersistTaps="handled"
+      bottomOffset={space.xl}
+    >
+      <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: space.lg }}>{children}</View>
+    </KeyboardAwareScrollView>
   )
 }
 

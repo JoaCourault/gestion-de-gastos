@@ -14,6 +14,8 @@ export default function TabsLayout() {
           tabBarActiveTintColor: t.primary,
           tabBarInactiveTintColor: t.muted,
           tabBarLabelStyle: { fontSize: 12, lineHeight: 16 },
+          // Con el teclado abierto la barra de pestañas ocupa espacio útil: se oculta.
+          tabBarHideOnKeyboard: true,
           tabBarStyle: { backgroundColor: t.surface, borderTopColor: t.border },
           headerStyle: { backgroundColor: t.surface },
           headerTintColor: t.text,

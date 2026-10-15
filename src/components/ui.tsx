@@ -15,6 +15,7 @@ import {
   type TextStyle,
   type ViewStyle,
 } from 'react-native'
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { MAX_WIDTH, radius, space, useTheme } from '@/lib/theme'
@@ -40,12 +41,14 @@ export function Screen({
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }}>
       {scroll ? (
-        <ScrollView
+        // Al abrir el teclado, desplaza el contenido para que el campo enfocado quede visible.
+        <KeyboardAwareScrollView
           contentContainerStyle={{ paddingBottom: (fab ? 96 : 32) + insets.bottom }}
           keyboardShouldPersistTaps="handled"
+          bottomOffset={space.xl}
         >
           {inner}
-        </ScrollView>
+        </KeyboardAwareScrollView>
       ) : (
         inner
       )}

@@ -3,7 +3,10 @@ import * as SplashScreen from 'expo-splash-screen'
 import { StatusBar } from 'expo-status-bar'
 import { useEffect } from 'react'
 
+import { KeyboardProvider } from 'react-native-keyboard-controller'
+
 import { ErrorScreen, LoginScreen, SetupScreen } from '@/components/Gate'
+import { PortalHost } from '@/components/Portal'
 import { Loading } from '@/components/ui'
 import { AuthProvider, useAuth } from '@/lib/auth'
 import { useAutoBackup, useBackupNotificationTap } from '@/lib/backup'
@@ -23,6 +26,7 @@ function AppStack() {
   if (status === 'error') return <ErrorScreen message={error ?? ''} onRetry={reload} />
 
   return (
+    <PortalHost>
     <Stack
       screenOptions={{
         headerStyle: { backgroundColor: t.surface },
@@ -42,6 +46,7 @@ function AppStack() {
       <Stack.Screen name="configuracion" options={{ title: 'Cotización y presupuestos' }} />
       <Stack.Screen name="backup" options={{ title: 'Backup y restauración' }} />
     </Stack>
+    </PortalHost>
   )
 }
 
@@ -75,9 +80,12 @@ export default function RootLayout() {
       }}
     >
       <StatusBar style={dark ? 'light' : 'dark'} />
-      <AuthProvider>
-        <Root />
-      </AuthProvider>
+      {/* Necesario para que las vistas se acomoden al teclado en Android (pantalla edge-to-edge) */}
+      <KeyboardProvider>
+        <AuthProvider>
+          <Root />
+        </AuthProvider>
+      </KeyboardProvider>
     </ThemeProvider>
   )
 }
