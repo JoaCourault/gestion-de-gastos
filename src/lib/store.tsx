@@ -44,8 +44,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth()
   const userId = session?.user.id ?? null
   const cacheKey = userId ? `cache:data:${userId}` : null
-  const rawMeta = session?.user.user_metadata?.nombre
-  const metaNombre = typeof rawMeta === 'string' ? rawMeta.trim() : ''
+  const metaNombre = session?.user.nombre ?? ''
 
   const [data, setData] = useState<AppData | null>(null)
   const [status, setStatus] = useState<Status>('loading')
@@ -57,7 +56,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [cacheKey],
   )
 
-  /** Lee de Supabase; si no hay conexión, recurre a la última copia guardada en el dispositivo. */
+  /** Lee del backend; si no hay conexión, recurre a la última copia guardada en el dispositivo. */
   const fetchState = useCallback(async (): Promise<LoadResult> => {
     try {
       if (!userId) throw new Error('Sesión requerida')
@@ -95,7 +94,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }, [fetchState, applyState])
 
-  /** Ejecuta la escritura en Supabase y, si sale bien, aplica el cambio al estado local. */
+  /** Ejecuta la escritura en el backend y, si sale bien, aplica el cambio al estado local. */
   const mutate = useCallback(
     async (write: () => Promise<void>, apply: (d: AppData) => AppData) => {
       await write()

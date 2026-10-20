@@ -1,0 +1,34 @@
+{
+  "name": "gestor-de-gastos-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend propio del Gestor de Gastos: API HTTP + Postgres estándar. Alternativa soberana a Supabase.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "migrate": "tsx src/scripts/migrate.ts",
+    "cli": "tsx src/cli.ts",
+    "import:supabase": "tsx src/scripts/import-supabase.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --env-file=.env --test test/api.test.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "bcryptjs": "^3.0.3",
+    "hono": "^4.13.13",
+    "nodemailer": "^10.1.1",
+    "pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1",
+    "typescript": "~5.9"
+  }
+}

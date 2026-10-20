@@ -1,0 +1,42 @@
+# Backend propio completo: Postgres + API. Corre igual en tu PC, en un VPS o en cualquier servidor con Docker.
+#
+#   cp server/.env.example server/.env   (y completar JWT_SECRET y POSTGRES_PASSWORD)
+#   docker compose up -d --build
+#   API en http://localhost:8787  ·  en la app: EXPO_PUBLIC_BACKEND=api, EXPO_PUBLIC_API_URL=http://<ip>:8787
+#
+# Para usar un Postgres externo (Neon, RDS, Supabase como base pelada…) basta con apuntar DATABASE_URL
+# a esa base y levantar solo el servicio "api":  docker compose up -d --build api
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file: server/.env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gastos}
+      POSTGRES_USER: ${POSTGRES_USER:-gastos}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # solo accesible desde esta máquina (para pg_dump, clientes SQL, etc.)
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-gastos} -d $${POSTGRES_DB:-gastos}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    env_file: server/.env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8787:8787"
+
+volumes:
+  pgdata:

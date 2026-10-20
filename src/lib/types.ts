@@ -1,4 +1,4 @@
-// Modelo de datos de la app (camelCase). En Supabase las tablas usan snake_case;
+// Modelo de datos de la app (camelCase). En la base las tablas usan snake_case (contract/rows.ts);
 // la conversión está en repo.ts.
 
 /** Período de resumen identificado por el MES DE CIERRE, formato 'YYYY-MM' (igual que las columnas OCT-26 del Excel). */
@@ -100,11 +100,13 @@ export interface SharedWithMe {
   myPersonIds: string[]
   /** id de usuario dueño → nombre */
   owners: Record<string, string>
+  /** id de usuario dueño → su cotización del dólar (si el backend la expone) */
+  ownerRates: Record<string, number>
   cards: (Card & { ownerId: string })[]
   people: Person[]
   cardExpenses: (CardExpense & { ownerId: string })[]
 }
 
-export const EMPTY_SHARED: SharedWithMe = { myPersonIds: [], owners: {}, cards: [], people: [], cardExpenses: [] }
+export const EMPTY_SHARED: SharedWithMe = { myPersonIds: [], owners: {}, ownerRates: {}, cards: [], people: [], cardExpenses: [] }
 
 export const ME = 'yo'

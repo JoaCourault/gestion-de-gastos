@@ -211,7 +211,7 @@ export function sharedDebts(data: AppData, p: Period) {
   for (const e of shared.cardExpenses) {
     const card = cardById.get(e.cardId)
     if (!card) continue
-    const inst = installmentIn(e, card, p, data.settings.cotizacionUSD)
+    const inst = installmentIn(e, card, p, shared.ownerRates[e.ownerId] ?? data.settings.cotizacionUSD)
     if (!inst) continue
     const f = shareFor(e, shared.myPersonIds)
     if (f <= 0) continue

@@ -11,7 +11,7 @@ import { Loading } from '@/components/ui'
 import { AuthProvider, useAuth } from '@/lib/auth'
 import { useAutoBackup, useBackupNotificationTap } from '@/lib/backup'
 import { DataProvider, useStore } from '@/lib/store'
-import { supabaseConfigured } from '@/lib/supabase'
+import { backend } from '@/lib/data'
 import { useIsDark, useTheme } from '@/lib/theme'
 
 SplashScreen.preventAutoHideAsync()
@@ -57,7 +57,7 @@ function Root() {
     if (!loading) SplashScreen.hideAsync()
   }, [loading])
 
-  if (!supabaseConfigured) return <SetupScreen />
+  if (!backend.configured) return <SetupScreen />
   if (loading) return <Loading />
   if (!session) return <LoginScreen />
   return (

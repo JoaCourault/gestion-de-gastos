@@ -2,7 +2,13 @@
 
 App personal para tarjetas de crédito (cuotas, cierres y vencimientos) y gastos del mes.
 Un solo código **Expo / React Native** que corre en el navegador de la PC (localhost) y se compila a **APK** para Android.
-Los datos viven en **Supabase** (Postgres) protegidos con login y RLS: solo tu usuario puede leerlos o modificarlos.
+Los datos viven en **Postgres**, con dos backends intercambiables:
+
+- **Supabase** (servicio administrado), o
+- **servidor propio** (`server/`: Node + Postgres en Docker, en tu PC o en cualquier servidor).
+
+La app no depende de ninguno: se elige con una variable de entorno, y hay herramientas para migrar los datos
+(incluidos usuarios y contraseñas) entre uno y otro. Ver **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ## Qué hace
 
@@ -19,7 +25,7 @@ Los datos viven en **Supabase** (Postgres) protegidos con login y RLS: solo tu u
 - **Backup**: exportar / restaurar un `.json` (para guardar en Drive), copia automática diaria a la hora que elijas
   y recordatorio en el celular.
 
-## 1. Crear el proyecto de Supabase (una vez)
+## 1a. Backend: Supabase (una vez)
 
 1. Entrá a <https://supabase.com>, creá una cuenta y un proyecto nuevo (plan gratuito).
 2. **SQL Editor → New query**: pegá todo el contenido de [`supabase/schema.sql`](supabase/schema.sql) y tocá **Run**.
@@ -31,17 +37,45 @@ Los datos viven en **Supabase** (Postgres) protegidos con login y RLS: solo tu u
 5. **Project Settings → API**: copiá la *Project URL* y la *publishable key* (o *anon key*). Nunca uses la *secret* /
    *service_role* key en la app.
 
+## 1b. Backend: servidor propio con Docker (alternativa a Supabase)
+
+Requiere Docker. Levanta Postgres + la API en el puerto 8787:
+
+```bash
+cp server/.env.example server/.env
+```
+
+Completá en `server/.env` `JWT_SECRET` (el archivo dice cómo generarlo) y `POSTGRES_PASSWORD` (también dentro de
+`DATABASE_URL`). Después:
+
+```bash
+npm run server:up
+```
+
+- **Usuarios:** se registran desde la app. Sin SMTP configurado, el link de confirmación aparece en `npm run server:logs`.
+  También se administran por consola: `docker compose exec api npm run cli -- user:create <email> <clave> <nombre>`
+  (y `user:confirm`, `user:password`, `user:list`).
+- **Migrar desde Supabase** con usuarios y contraseñas: ver *Manual de soberanía* en [ARCHITECTURE.md](ARCHITECTURE.md).
+- **Postgres externo** (Neon, RDS…): apuntá `DATABASE_URL` a esa base y levantá solo la API: `docker compose up -d --build api`.
+- **Detener:** `npm run server:down`. Los datos quedan en el volumen de Docker.
+
 ## 2. Configurar la app
 
 ```bash
 npm install
 ```
 
-Copiá `.env.example` como `.env.local` y completá:
+Copiá `.env.example` como `.env.local` y completá **uno** de los dos backends:
 
 ```
+# Supabase
+EXPO_PUBLIC_BACKEND=supabase
 EXPO_PUBLIC_SUPABASE_URL=https://TU-PROYECTO.supabase.co
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=tu-key
+
+# o servidor propio (desde el celular, la IP de la PC en la red, no localhost)
+EXPO_PUBLIC_BACKEND=api
+EXPO_PUBLIC_API_URL=http://192.168.0.10:8787
 ```
 
 ## 3. Usarla en la PC (localhost)
@@ -104,10 +138,18 @@ conservá los `.json`.
 ## Desarrollo
 
 ```bash
-npm run typecheck   # TypeScript
-npx expo lint       # ESLint
-npx expo-doctor     # dependencias de Expo
+npm run typecheck:all   # TypeScript de la app y del servidor
+npx expo lint           # ESLint
+npx expo-doctor         # dependencias de Expo
+npm run server:test     # pruebas end-to-end del servidor (con npm run server:up)
 ```
 
-Estructura: `src/app` (pantallas, Expo Router), `src/components` (UI), `src/lib` (modelo, cálculo de cuotas y cierres
-en `calc.ts`, acceso a Supabase en `repo.ts`, backup), `supabase/schema.sql` (base de datos).
+Estructura (detalle en [ARCHITECTURE.md](ARCHITECTURE.md)):
+
+- **App:**
+  - `src/app` pantallas (Expo Router), `src/components` UI.
+  - `src/lib` modelo (`types.ts`), cálculo de cuotas y cierres (`calc.ts`), estado (`store.tsx`), conversión (`repo.ts`) y backup.
+  - `src/lib/data` la interfaz de backend y sus adaptadores (`supabase/`, `http/`).
+- **Contrato:** `contract/`, tipos compartidos entre app y servidor.
+- **Servidor propio:** `server/` (API, auth, permisos, migraciones SQL, CLI, importador de Supabase); `docker-compose.yml`.
+- **Supabase:** `supabase/` (esquema y migraciones para el SQL Editor).

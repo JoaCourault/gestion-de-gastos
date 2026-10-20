@@ -1,9 +1,22 @@
-// Acceso a Supabase: carga completa, altas/bajas/modificaciones y backup.
-// Convierte entre las filas de la base (snake_case) y el modelo de la app (camelCase).
+// Repositorio de la app: convierte entre las filas del contrato (snake_case, contract/rows.ts) y el
+// modelo de la app (camelCase, types.ts), y delega la lectura/escritura en el backend configurado.
+// No conoce al proveedor: eso vive en lib/data/<adaptador>.
 
 import * as Crypto from 'expo-crypto'
 
-import { supabase } from './supabase'
+import type {
+  BackupFile,
+  BackupPayload,
+  CardExpenseRow,
+  CardRow,
+  ExpenseRow,
+  PersonRow,
+  SettingsRow,
+  SharedPayload,
+  TypeRow,
+} from '@contract/rows'
+
+import { backend } from './data'
 import {
   EMPTY_SHARED,
   ME,
@@ -19,83 +32,9 @@ import {
   type SharedWithMe,
 } from './types'
 
+export type { BackupFile, BackupPayload }
+
 export const newId = () => Crypto.randomUUID()
-
-// ───────────── Filas de la base ─────────────
-
-interface CardRow {
-  user_id?: string
-  id: string
-  nombre: string
-  color: string
-  dia_cierre: number
-  dia_vencimiento: number
-  activa: boolean
-}
-interface CycleRow {
-  card_id: string
-  periodo: string
-  cierre: string
-  vencimiento: string
-}
-interface PersonRow {
-  id: string
-  nombre: string
-  email?: string | null
-}
-interface CardExpenseRow {
-  user_id?: string
-  id: string
-  card_id: string
-  person_id: string | null
-  descripcion: string
-  fijo: boolean
-  fecha: string
-  cuotas: number
-  total: number | string
-  moneda: 'ARS' | 'USD'
-  partes: number
-  compartido?: string[] | null
-  primer_periodo_manual: string | null
-  hasta: string | null
-  notas: string | null
-}
-interface TypeRow {
-  id: string
-  nombre: string
-  grupo: string
-  clase_por_defecto: 'necesario' | 'innecesario'
-}
-interface ExpenseRow {
-  id: string
-  fecha: string
-  type_id: string
-  detalle: string
-  monto: number | string
-  clase: 'necesario' | 'innecesario'
-}
-interface SettingsRow {
-  cotizacion_usd: number | string
-  presupuesto: Settings['presupuesto']
-  presupuesto_mes: Settings['presupuestoMes']
-}
-
-/** Contenido de un archivo de backup / parámetro de restore_backup(). */
-export interface BackupPayload {
-  cards: CardRow[]
-  card_cycles: CycleRow[]
-  people: PersonRow[]
-  card_expenses: CardExpenseRow[]
-  expense_types: TypeRow[]
-  expenses: ExpenseRow[]
-  settings: SettingsRow
-}
-export interface BackupFile {
-  app: 'gestor-de-gastos'
-  version: 1
-  exportedAt: string
-  data: BackupPayload
-}
 
 export const DEFAULT_SETTINGS: Settings = {
   cotizacionUSD: 1,
@@ -113,6 +52,7 @@ const cardToRow = (c: Card): CardRow => ({
   dia_vencimiento: c.diaVencimiento,
   activa: c.activa,
 })
+const personToRow = (p: Person): PersonRow => ({ id: p.id, nombre: p.nombre, email: p.email?.trim().toLowerCase() || null })
 const cardExpenseToRow = (e: CardExpense): CardExpenseRow => ({
   id: e.id,
   card_id: e.cardId,
@@ -216,11 +156,26 @@ export function toPayload(d: AppData): BackupPayload {
     card_cycles: d.cards.flatMap((c) =>
       Object.entries(c.ciclos).map(([periodo, v]) => ({ card_id: c.id, periodo, ...v })),
     ),
-    people: d.people.map((p) => ({ id: p.id, nombre: p.nombre, email: p.email?.trim() || null })),
+    people: d.people.map(personToRow),
     card_expenses: d.cardExpenses.map(cardExpenseToRow),
     expense_types: d.types.map(typeToRow),
     expenses: d.expenses.map(expenseToRow),
     settings: settingsToRow(d.settings),
+  }
+}
+
+function fromShared(p: SharedPayload): SharedWithMe {
+  const parsed = fromPayload({ ...p, expense_types: [], expenses: [], settings: null })
+  const ownerOf = new Map([...p.cards, ...p.card_expenses].map((r) => [r.id, r.user_id ?? '']))
+  return {
+    myPersonIds: p.my_person_ids,
+    owners: Object.fromEntries(p.owners.map((o) => [o.user_id, o.nombre])),
+    ownerRates: Object.fromEntries(
+      p.owners.filter((o) => Number(o.cotizacion_usd) > 0).map((o) => [o.user_id, Number(o.cotizacion_usd)]),
+    ),
+    cards: parsed.cards.map((c) => ({ ...c, ownerId: ownerOf.get(c.id) ?? '' })),
+    people: parsed.people,
+    cardExpenses: parsed.cardExpenses.map((e) => ({ ...e, ownerId: ownerOf.get(e.id) ?? '' })),
   }
 }
 
@@ -249,135 +204,45 @@ export function parseBackupFile(text: string): BackupFile {
 
 // ───────────── Lectura / escritura ─────────────
 
-function check<T>(res: { data: T; error: { message: string; code?: string; details?: string | null; hint?: string | null } | null }): T {
-  if (res.error) {
-    console.error('[Supabase]', res.error)
-    // 42703 = columna inexistente: la base está desactualizada respecto de la app
-    if (res.error.code === '42703') {
-      throw new Error(
-        `A tu base de Supabase le falta una actualización (${res.error.message}). ` +
-          'Corré los archivos supabase/migracion-*.sql en el SQL Editor.',
-      )
-    }
-    // 23503 = violación de clave foránea (se intenta borrar algo que está en uso)
-    if (res.error.code === '23503' && /delete/i.test(res.error.message + (res.error.details ?? ''))) {
-      throw new Error('No se puede borrar: hay registros que lo usan.')
-    }
-    const extra = [res.error.details, res.error.hint].filter(Boolean).join(' · ')
-    throw new Error(`${res.error.message}${res.error.code ? ` (${res.error.code})` : ''}${extra ? `\n${extra}` : ''}`)
-  }
-  return res.data
-}
-
-/** Datos propios del usuario (las políticas de la base además dejan ver filas compartidas: se filtran acá). */
+/** Datos propios + lo compartido conmigo. Si lo compartido falla (p. ej. base sin migrar), se sigue sin eso. */
 export async function loadAll(userId: string): Promise<AppData> {
-  const [cards, cycles, people, cardExpenses, types, expenses, settings, shared] = await Promise.all([
-    supabase.from('cards').select('*').eq('user_id', userId),
-    supabase.from('card_cycles').select('*').eq('user_id', userId),
-    supabase.from('people').select('*').eq('user_id', userId),
-    supabase.from('card_expenses').select('*').eq('user_id', userId).order('fecha', { ascending: false }),
-    supabase.from('expense_types').select('*'),
-    supabase.from('expenses').select('*').order('fecha', { ascending: false }),
-    supabase.from('settings').select('*').maybeSingle(),
-    loadShared(userId),
+  const [{ own, profile }, shared] = await Promise.all([
+    backend.data.loadOwn(userId),
+    backend.data.loadShared(userId).then(fromShared, (e) => {
+      console.warn('[datos] sin consumos compartidos', e)
+      return EMPTY_SHARED
+    }),
   ])
-  const own = fromPayload({
-    cards: check(cards) as CardRow[],
-    card_cycles: check(cycles) as CycleRow[],
-    people: check(people) as PersonRow[],
-    card_expenses: check(cardExpenses) as CardExpenseRow[],
-    expense_types: check(types) as TypeRow[],
-    expenses: check(expenses) as ExpenseRow[],
-    settings: check(settings) as SettingsRow,
-  })
-  return { ...own, profile: shared.profile, shared: shared.shared }
+  return { ...fromPayload(own), profile: { nombre: profile?.nombre ?? '' }, shared }
 }
 
-/**
- * Consumos de otros usuarios donde participo (+ sus tarjetas, cierres, participantes y nombre del dueño).
- * Si la base todavía no tiene la migración 003, devuelve vacío en lugar de fallar.
- */
-async function loadShared(userId: string): Promise<{ profile: AppData['profile']; shared: SharedWithMe }> {
-  try {
-    const [mine, profiles, cards, cycles, people, cardExpenses] = await Promise.all([
-      supabase.rpc('my_person_ids'),
-      supabase.from('profiles').select('*'),
-      supabase.from('cards').select('*').neq('user_id', userId),
-      supabase.from('card_cycles').select('*').neq('user_id', userId),
-      supabase.from('people').select('*').neq('user_id', userId),
-      supabase.from('card_expenses').select('*').neq('user_id', userId).order('fecha', { ascending: false }),
-    ])
-    const profileRows = check(profiles) as { user_id: string; nombre: string }[]
-    const expenseRows = check(cardExpenses) as CardExpenseRow[]
-    const cardRows = check(cards) as CardRow[]
-    const parsed = fromPayload({
-      cards: cardRows,
-      card_cycles: check(cycles) as CycleRow[],
-      people: check(people) as PersonRow[],
-      card_expenses: expenseRows,
-      expense_types: [],
-      expenses: [],
-      settings: null as unknown as SettingsRow,
-    })
-    const ownerOf = new Map([...cardRows, ...expenseRows].map((r) => [r.id, r.user_id ?? '']))
-    const owners: Record<string, string> = {}
-    for (const r of profileRows) if (r.user_id !== userId) owners[r.user_id] = r.nombre
-    return {
-      profile: { nombre: profileRows.find((r) => r.user_id === userId)?.nombre ?? '' },
-      shared: {
-        myPersonIds: (check(mine) as string[] | null) ?? [],
-        owners,
-        cards: parsed.cards.map((c) => ({ ...c, ownerId: ownerOf.get(c.id) ?? '' })),
-        people: parsed.people,
-        cardExpenses: parsed.cardExpenses.map((e) => ({ ...e, ownerId: ownerOf.get(e.id) ?? '' })),
-      },
-    }
-  } catch (e) {
-    console.warn('[Supabase] sin datos compartidos (¿falta la migración 003?)', e)
-    return { profile: { nombre: '' }, shared: EMPTY_SHARED }
-  }
-}
+const d = () => backend.data
 
 export const api = {
-  saveCard: async (c: Card) => void check(await supabase.from('cards').upsert(cardToRow(c))),
-  deleteCard: async (id: string) => void check(await supabase.from('cards').delete().eq('id', id)),
+  saveCard: (c: Card) => d().upsert('cards', cardToRow(c)),
+  deleteCard: (id: string) => d().remove('cards', id),
 
-  saveCycle: async (cardId: string, periodo: Period, cierre: ISODate, vencimiento: ISODate) =>
-    void check(await supabase.from('card_cycles').upsert({ card_id: cardId, periodo, cierre, vencimiento })),
-  saveCycles: async (cardId: string, cycles: Record<Period, { cierre: ISODate; vencimiento: ISODate }>) => {
-    const rows = Object.entries(cycles).map(([periodo, v]) => ({ card_id: cardId, periodo, ...v }))
-    if (rows.length) check(await supabase.from('card_cycles').upsert(rows))
-  },
-  deleteCycle: async (cardId: string, periodo: Period) =>
-    void check(await supabase.from('card_cycles').delete().eq('card_id', cardId).eq('periodo', periodo)),
+  saveCycle: (cardId: string, periodo: Period, cierre: ISODate, vencimiento: ISODate) =>
+    d().upsertCycles([{ card_id: cardId, periodo, cierre, vencimiento }]),
+  saveCycles: (cardId: string, cycles: Record<Period, { cierre: ISODate; vencimiento: ISODate }>) =>
+    d().upsertCycles(Object.entries(cycles).map(([periodo, v]) => ({ card_id: cardId, periodo, ...v }))),
+  deleteCycle: (cardId: string, periodo: Period) => d().removeCycle(cardId, periodo),
 
-  savePerson: async (p: Person) =>
-    void check(await supabase.from('people').upsert({ id: p.id, nombre: p.nombre, email: p.email?.trim().toLowerCase() || null })),
-  deletePerson: async (id: string) => void check(await supabase.from('people').delete().eq('id', id)),
+  savePerson: (p: Person) => d().upsert('people', personToRow(p)),
+  deletePerson: (id: string) => d().remove('people', id),
 
-  saveCardExpense: async (e: CardExpense) => void check(await supabase.from('card_expenses').upsert(cardExpenseToRow(e))),
-  deleteCardExpense: async (id: string) => void check(await supabase.from('card_expenses').delete().eq('id', id)),
+  saveCardExpense: (e: CardExpense) => d().upsert('card_expenses', cardExpenseToRow(e)),
+  deleteCardExpense: (id: string) => d().remove('card_expenses', id),
 
-  saveType: async (t: ExpenseType) => void check(await supabase.from('expense_types').upsert(typeToRow(t))),
-  deleteType: async (id: string) => void check(await supabase.from('expense_types').delete().eq('id', id)),
+  saveType: (t: ExpenseType) => d().upsert('expense_types', typeToRow(t)),
+  deleteType: (id: string) => d().remove('expense_types', id),
 
-  saveExpense: async (e: Expense) => void check(await supabase.from('expenses').upsert(expenseToRow(e))),
-  deleteExpense: async (id: string) => void check(await supabase.from('expenses').delete().eq('id', id)),
+  saveExpense: (e: Expense) => d().upsert('expenses', expenseToRow(e)),
+  deleteExpense: (id: string) => d().remove('expenses', id),
 
-  saveSettings: async (s: Settings) => {
-    const { data } = await supabase.auth.getSession()
-    const userId = data.session?.user.id
-    if (!userId) throw new Error('Sesión vencida: volvé a ingresar.')
-    check(await supabase.from('settings').upsert({ user_id: userId, ...settingsToRow(s) }))
-  },
+  saveSettings: (s: Settings) => d().saveSettings(settingsToRow(s)),
+  saveProfile: (nombre: string) => d().saveProfile(nombre),
 
-  saveProfile: async (nombre: string) => {
-    const { data } = await supabase.auth.getSession()
-    const userId = data.session?.user.id
-    if (!userId) throw new Error('Sesión vencida: volvé a ingresar.')
-    check(await supabase.from('profiles').upsert({ user_id: userId, nombre }))
-  },
-
-  /** Reemplaza todos los datos del usuario (transacción en la base). */
-  restore: async (payload: BackupPayload) => void check(await supabase.rpc('restore_backup', { payload })),
+  /** Reemplaza todos los datos del usuario (transacción en el backend). */
+  restore: (payload: BackupPayload) => d().restore(payload),
 }

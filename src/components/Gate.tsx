@@ -5,6 +5,7 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 
 import { Button, Field, Input, Panel, Segmented, Txt } from '@/components/ui'
 import { signIn, signUp } from '@/lib/auth'
+import { backend } from '@/lib/data'
 import { space, useTheme } from '@/lib/theme'
 
 function Centered({ children }: { children: ReactNode }) {
@@ -129,19 +130,16 @@ export function LoginScreen() {
   )
 }
 
-/** Se muestra si falta configurar Supabase en .env.local. */
+/** Se muestra si falta configurar el backend en .env.local. */
 export function SetupScreen() {
   return (
     <Centered>
       <Brand />
       <Panel>
         <Txt v="h2" style={{ marginBottom: space.sm }}>
-          Falta conectar Supabase
+          {backend.kind === 'supabase' ? 'Falta conectar Supabase' : 'Falta conectar el servidor'}
         </Txt>
-        <Txt muted>
-          Creá el archivo .env.local en la carpeta del proyecto con EXPO_PUBLIC_SUPABASE_URL y
-          EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY (ver README) y reiniciá con: npx expo start --clear
-        </Txt>
+        <Txt muted>{backend.setupHint}</Txt>
       </Panel>
     </Centered>
   )

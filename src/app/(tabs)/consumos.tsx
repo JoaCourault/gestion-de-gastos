@@ -21,7 +21,7 @@ export default function Consumos() {
   const { period, setPeriod, today } = usePeriodState(data, params.p)
   const [cardId, setCardId] = useState<string>(params.card ?? 'all')
   const [personId, setPersonId] = useState<string>('all')
-  const [vista, setVista] = useState<Vista>('resumen')
+  const [vista, setVista] = useState<Vista>(params.v === 'conmigo' ? 'conmigo' : 'resumen')
   const [q, setQ] = useState('')
 
   // Al llegar desde el Resumen con otros filtros, aplicarlos.
@@ -272,8 +272,13 @@ function SharedView({ period, setPeriod, today }: { period: string; setPeriod: (
   const t = useTheme()
   const deudas = sharedDebts(data, period)
   const total = deudas.reduce((a, d) => a + d.total, 0)
-  const nombrePersona = (id: string) =>
-    data.shared.myPersonIds.includes(id) ? 'vos' : (data.shared.people.find((p) => p.id === id)?.nombre ?? '?')
+  // En un consumo ajeno, 'yo' es el dueño (no quien mira).
+  const nombrePersona = (id: string, dueño: string) =>
+    id === ME
+      ? dueño
+      : data.shared.myPersonIds.includes(id)
+        ? 'vos'
+        : (data.shared.people.find((p) => p.id === id)?.nombre ?? '?')
 
   return (
     <View style={{ gap: space.md }}>
@@ -302,7 +307,7 @@ function SharedView({ period, setPeriod, today }: { period: string; setPeriod: (
                 </Txt>
                 <Txt v="small" muted numberOfLines={2}>
                   {card.nombre} de {d.nombre} · {e.fijo ? 'mensual' : `Cuota ${inst.nro}/${inst.de}`}
-                  {e.compartido.length > 1 ? ` · entre ${e.compartido.map(nombrePersona).join(', ')}` : ''}
+                  {e.compartido.length > 1 ? ` · entre ${e.compartido.map((pid) => nombrePersona(pid, d.nombre)).join(', ')}` : ''}
                 </Txt>
               </View>
               <View style={{ alignItems: 'flex-end' }}>
