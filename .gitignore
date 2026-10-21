@@ -77,3 +77,6 @@ Datos.xlsx
 datos-iniciales.json
 *.backup.json
 gastos-*.json
+
+# volcados de resúmenes de tarjeta (datos personales)
+importacion-*/

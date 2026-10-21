@@ -29,6 +29,25 @@ export function periodForDate(card: Card, fecha: ISODate): Period {
 /** Período abierto hoy para la tarjeta (el próximo cierre). */
 export const openPeriod = (card: Card, today: ISODate) => periodForDate(card, today)
 
+/** Resúmenes de la tarjeta que vencen en el mes `mes` ('YYYY-MM'): normalmente uno, a veces ninguno o dos. */
+export function periodsDueIn(card: Card, mes: string): Period[] {
+  return [-2, -1, 0, 1].map((i) => addPeriods(mes, i)).filter((p) => periodOf(cycleOf(card, p).vencimiento) === mes)
+}
+
+/** Cómo se agrupan los resúmenes en un mes: por el mes en que cierran o por el mes en que vencen (se pagan). */
+export type Agrupacion = 'cierre' | 'vencimiento'
+
+/** Resúmenes (períodos) de la tarjeta que corresponden al mes según la agrupación. */
+export const periodsIn = (card: Card, mes: string, modo: Agrupacion): Period[] =>
+  modo === 'vencimiento' ? periodsDueIn(card, mes) : [mes]
+
+/** Mes en que vence el primer resumen de la tarjeta que todavía no venció. */
+export function nextDueMonth(card: Card, today: ISODate): string {
+  let p = addPeriods(periodOf(today), -2)
+  while (cycleOf(card, p).vencimiento < today) p = addPeriods(p, 1)
+  return periodOf(cycleOf(card, p).vencimiento)
+}
+
 export function firstPeriod(e: CardExpense, card: Card): Period {
   return e.primerPeriodoManual ?? periodForDate(card, e.fecha)
 }
@@ -115,6 +134,7 @@ export interface StatementLine {
 }
 export interface CardStatement {
   card: Card
+  period: Period
   cycle: Cycle
   lines: StatementLine[]
   mio: number
@@ -124,37 +144,48 @@ export interface CardStatement {
   porPersona: Map<string, number>
 }
 
-/** Resumen de cada tarjeta para el período p (montos en ARS). */
-export function statements(data: AppData, p: Period, opts: { incluirInactivas?: boolean } = {}): CardStatement[] {
+/** Resumen de la tarjeta para el período p (montos en ARS). */
+function cardStatement(data: AppData, card: Card, p: Period): CardStatement {
   const cot = data.settings.cotizacionUSD
-  return data.cards
-    .filter((c) => opts.incluirInactivas || c.activa)
-    .map((card) => {
-      const lines: StatementLine[] = []
-      const porPersona = new Map<string, number>()
-      let mio = 0
-      let total = 0
-      for (const e of data.cardExpenses) {
-        if (e.cardId !== card.id) continue
-        const inst = installmentIn(e, card, p, cot)
-        if (!inst) continue
-        lines.push({ expense: e, inst })
-        total += inst.montoARS
-        for (const s of sharesOf(e)) {
-          const v = inst.montoARS * s.fraccion
-          if (s.personId === ME) mio += v
-          else porPersona.set(s.personId, (porPersona.get(s.personId) ?? 0) + v)
-        }
-      }
-      return { card, cycle: cycleOf(card, p), lines, mio, otros: total - mio, total, porPersona }
-    })
+  const lines: StatementLine[] = []
+  const porPersona = new Map<string, number>()
+  let mio = 0
+  let total = 0
+  for (const e of data.cardExpenses) {
+    if (e.cardId !== card.id) continue
+    const inst = installmentIn(e, card, p, cot)
+    if (!inst) continue
+    lines.push({ expense: e, inst })
+    total += inst.montoARS
+    for (const s of sharesOf(e)) {
+      const v = inst.montoARS * s.fraccion
+      if (s.personId === ME) mio += v
+      else porPersona.set(s.personId, (porPersona.get(s.personId) ?? 0) + v)
+    }
+  }
+  return { card, period: p, cycle: cycleOf(card, p), lines, mio, otros: total - mio, total, porPersona }
 }
 
-/** Totales de tarjetas para los próximos n períodos desde p. */
-export function projection(data: AppData, from: Period, n: number) {
+/**
+ * Resúmenes de todas las tarjetas para el mes `mes`. Por vencimiento, cada tarjeta aporta el resumen
+ * que vence en el mes (lo que se paga ese mes), aunque cierren en meses distintos.
+ */
+export function statementsFor(
+  data: AppData,
+  mes: string,
+  modo: Agrupacion,
+  opts: { incluirInactivas?: boolean } = {},
+): CardStatement[] {
+  return data.cards
+    .filter((c) => opts.incluirInactivas || c.activa)
+    .flatMap((card) => periodsIn(card, mes, modo).map((p) => cardStatement(data, card, p)))
+}
+
+/** Totales de tarjetas para los próximos n meses desde `from`, agrupados según `modo`. */
+export function projection(data: AppData, from: string, n: number, modo: Agrupacion) {
   return Array.from({ length: n }, (_, i) => {
     const p = addPeriods(from, i)
-    const st = statements(data, p)
+    const st = statementsFor(data, p, modo)
     return {
       period: p,
       mio: st.reduce((a, s) => a + s.mio, 0),
@@ -198,24 +229,29 @@ export const shareFor = (e: CardExpense, personIds: string[]) =>
 export interface SharedLine {
   expense: CardExpense
   card: Card
+  /** período (mes de cierre) del resumen donde entra la cuota */
+  period: Period
   inst: Installment
   /** lo que me toca pagarle al dueño, en ARS */
   miParte: number
 }
 
-/** Por cada usuario dueño: lo que le debo en el resumen p por consumos donde participo. */
-export function sharedDebts(data: AppData, p: Period) {
+/** Por cada usuario dueño: lo que le debo por consumos donde participo, en los resúmenes del mes p según `modo`. */
+export function sharedDebts(data: AppData, p: Period, modo: Agrupacion) {
   const { shared } = data
   const cardById = new Map(shared.cards.map((c) => [c.id, c]))
   const porDueño = new Map<string, SharedLine[]>()
   for (const e of shared.cardExpenses) {
     const card = cardById.get(e.cardId)
     if (!card) continue
-    const inst = installmentIn(e, card, p, data.settings.cotizacionUSD)
-    if (!inst) continue
     const f = shareFor(e, shared.myPersonIds)
     if (f <= 0) continue
-    porDueño.set(e.ownerId, [...(porDueño.get(e.ownerId) ?? []), { expense: e, card, inst, miParte: inst.montoARS * f }])
+    for (const period of periodsIn(card, p, modo)) {
+      const inst = installmentIn(e, card, period, data.settings.cotizacionUSD)
+      if (!inst) continue
+      const line = { expense: e, card, period, inst, miParte: inst.montoARS * f }
+      porDueño.set(e.ownerId, [...(porDueño.get(e.ownerId) ?? []), line])
+    }
   }
   return [...porDueño.entries()].map(([ownerId, lines]) => ({
     ownerId,

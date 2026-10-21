@@ -1,9 +1,22 @@
 import { Pressable, StyleSheet, View } from 'react-native'
 
-import { IconButton, Txt } from '@/components/ui'
+import { IconButton, Segmented, Txt } from '@/components/ui'
+import type { Agrupacion } from '@/lib/calc'
 import { addPeriods, periodLong } from '@/lib/dates'
 import type { Period } from '@/lib/types'
 import { radius, useTheme } from '@/lib/theme'
+import { useAgrupacion } from '@/lib/usePeriod'
+
+const AGRUPACIONES: { value: Agrupacion; label: string }[] = [
+  { value: 'vencimiento', label: 'Por vencimiento' },
+  { value: 'cierre', label: 'Por cierre' },
+]
+
+/** Elige si los meses agrupan los resúmenes por mes de vencimiento o de cierre (vale para todas las pantallas). */
+export function AgrupacionSwitch() {
+  const [modo, setModo] = useAgrupacion()
+  return <Segmented options={AGRUPACIONES} value={modo} onChange={setModo} />
+}
 
 /** ‹ Octubre 2026 › — navegación entre meses/períodos. Tocar el centro vuelve al período "hoy". */
 export function PeriodNav({

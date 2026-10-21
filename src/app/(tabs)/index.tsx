@@ -3,22 +3,23 @@ import { useMemo, useState } from 'react'
 import { Pressable, View } from 'react-native'
 
 import { CycleSheet } from '@/components/CycleSheet'
-import { PeriodNav } from '@/components/PeriodNav'
+import { AgrupacionSwitch, PeriodNav } from '@/components/PeriodNav'
 import { Badge, Button, Chip, Empty, Grid, Panel, ProgressBar, Row, Screen, SectionTitle, Txt } from '@/components/ui'
-import { budgetFor, cycleOf, monthExpenses, projection, sharedDebts, statements } from '@/lib/calc'
-import { addPeriods, currentPeriod, daysUntil, fmtDate, fmtDayMonth, periodLong, periodShort, todayISO } from '@/lib/dates'
+import { budgetFor, cycleOf, monthExpenses, projection, sharedDebts, statementsFor } from '@/lib/calc'
+import { addPeriods, currentPeriod, daysUntil, diffPeriods, fmtDate, fmtDayMonth, periodLong, periodShort, todayISO } from '@/lib/dates'
 import { fmtMoney } from '@/lib/format'
 import { useData } from '@/lib/store'
 import { space, useTheme } from '@/lib/theme'
 import type { Card, Period } from '@/lib/types'
-import { usePeriodState } from '@/lib/usePeriod'
+import { useAgrupacion, usePeriodState } from '@/lib/usePeriod'
 
 export default function Resumen() {
   const data = useData()
   const t = useTheme()
-  const { period, setPeriod, today } = usePeriodState(data)
+  const [modo] = useAgrupacion()
+  const { period, setPeriod, today } = usePeriodState(data, undefined, modo)
 
-  const st = useMemo(() => statements(data, period), [data, period])
+  const st = useMemo(() => statementsFor(data, period, modo), [data, period, modo])
   const mio = st.reduce((a, s) => a + s.mio, 0)
   const otros = st.reduce((a, s) => a + s.otros, 0)
   // Lo que me debe cada persona en estos resúmenes
@@ -28,12 +29,14 @@ export default function Resumen() {
     const nombre = (pid: string) => data.people.find((p) => p.id === pid)?.nombre ?? 'Sin asignar'
     return [...m.entries()].map(([pid, v]) => ({ pid, nombre: nombre(pid), v })).sort((a, b) => b.v - a.v)
   }, [st, data.people])
-  const gastos = useMemo(() => monthExpenses(data, period), [data, period])
-  const budget = budgetFor(data, period)
-  const proj = useMemo(() => projection(data, today, 12), [data, today])
+  // Los gastos del mes no dependen de cierres ni vencimientos: mes calendario, que se mueve junto con la navegación.
+  const mesGastos = addPeriods(currentPeriod(), diffPeriods(today, period))
+  const gastos = useMemo(() => monthExpenses(data, mesGastos), [data, mesGastos])
+  const budget = budgetFor(data, mesGastos)
+  const proj = useMemo(() => projection(data, today, 12, modo), [data, today, modo])
   const maxProj = Math.max(1, ...proj.map((x) => x.mio))
   const eventos = useMemo(() => upcoming(data), [data])
-  const compartidos = useMemo(() => sharedDebts(data, period), [data, period])
+  const compartidos = useMemo(() => sharedDebts(data, period, modo), [data, period, modo])
   const [editCycle, setEditCycle] = useState<{ card: Card; period: Period } | null>(null)
 
   // Al empezar cada mes: tarjetas cuyo cierre de este mes todavía es estimado.
@@ -80,7 +83,14 @@ export default function Resumen() {
         </Panel>
       )}
 
-      <PeriodNav value={period} onChange={setPeriod} today={today} caption="Resúmenes que cierran este mes" />
+      <AgrupacionSwitch />
+      <View style={{ height: space.sm }} />
+      <PeriodNav
+        value={period}
+        onChange={setPeriod}
+        today={today}
+        caption={modo === 'vencimiento' ? 'Resúmenes que vencen este mes' : 'Resúmenes que cierran este mes'}
+      />
 
       <Panel style={{ marginTop: space.md }}>
         <Txt v="label" muted>
@@ -125,7 +135,7 @@ export default function Resumen() {
       <Grid min={260}>
         {st.map((s) => (
           <Panel
-            key={s.card.id}
+            key={`${s.card.id}-${s.period}`}
             onPress={() => router.push({ pathname: '/consumos', params: { card: s.card.id, p: period } })}
             style={{ borderLeftWidth: 5, borderLeftColor: s.card.color }}
           >
@@ -134,7 +144,7 @@ export default function Resumen() {
               {s.cycle.ajustado ? <Badge label="Fechas reales" tone="ok" /> : <Badge label="Estimado" />}
             </Row>
             <Txt v="small" muted style={{ marginTop: 2 }}>
-              Cierra {fmtDate(s.cycle.cierre)} · Vence {fmtDate(s.cycle.vencimiento)}
+              Resumen {periodShort(s.period)} · Cierra {fmtDate(s.cycle.cierre)} · Vence {fmtDate(s.cycle.vencimiento)}
             </Txt>
             <Txt v="money" style={{ marginTop: space.sm, fontSize: 20 }}>
               {fmtMoney(s.total)}
@@ -147,7 +157,7 @@ export default function Resumen() {
               variant="ghost"
               icon="calendar-outline"
               title="Editar cierre y vencimiento"
-              onPress={() => setEditCycle({ card: s.card, period })}
+              onPress={() => setEditCycle({ card: s.card, period: s.period })}
               style={{ alignSelf: 'flex-start', paddingHorizontal: 0, marginTop: space.xs }}
             />
           </Panel>
@@ -157,9 +167,9 @@ export default function Resumen() {
       <Grid min={300}>
         <View>
           <SectionTitle
-            right={<Button small variant="ghost" title="Ver gastos" onPress={() => router.push({ pathname: '/gastos', params: { m: period } })} />}
+            right={<Button small variant="ghost" title="Ver gastos" onPress={() => router.push({ pathname: '/gastos', params: { m: mesGastos } })} />}
           >
-            Otros gastos del mes
+            Otros gastos · {periodLong(mesGastos)}
           </SectionTitle>
           <Panel style={{ gap: space.md }}>
             <BudgetRow label="Necesarios" value={gastos.necesario} max={budget.necesario} />
@@ -198,7 +208,7 @@ export default function Resumen() {
         </View>
       </Grid>
 
-      <SectionTitle>Proyección de cuotas (mío)</SectionTitle>
+      <SectionTitle>Proyección por mes de {modo === 'vencimiento' ? 'pago' : 'cierre'} (mío)</SectionTitle>
       <Panel style={{ gap: 6 }}>
         {proj.map((x) => (
           <Pressable

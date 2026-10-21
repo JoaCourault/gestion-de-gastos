@@ -3,22 +3,33 @@ import { router, useLocalSearchParams } from 'expo-router'
 import { useMemo, useState } from 'react'
 import { Pressable, StyleSheet, View } from 'react-native'
 
-import { PeriodNav } from '@/components/PeriodNav'
+import { AgrupacionSwitch, PeriodNav } from '@/components/PeriodNav'
 import { Badge, ChipSelect, Empty, Fab, Input, Panel, Row, Screen, Segmented, Txt } from '@/components/ui'
-import { expenseStatus, installmentIn, involves, myShare, sharedDebts, sharesOf, toARS } from '@/lib/calc'
+import {
+  expenseStatus,
+  installmentIn,
+  involves,
+  myShare,
+  periodsIn,
+  sharedDebts,
+  sharesOf,
+  toARS,
+  type Agrupacion,
+} from '@/lib/calc'
 import { fmtDate, periodShort } from '@/lib/dates'
 import { fmtMoney } from '@/lib/format'
 import { useData } from '@/lib/store'
 import { space, useTheme } from '@/lib/theme'
 import { ME, type Card, type CardExpense } from '@/lib/types'
-import { usePeriodState } from '@/lib/usePeriod'
+import { useAgrupacion, usePeriodState } from '@/lib/usePeriod'
 
 type Vista = 'resumen' | 'todos' | 'conmigo'
 
 export default function Consumos() {
   const data = useData()
   const params = useLocalSearchParams<{ card?: string; p?: string; v?: string }>()
-  const { period, setPeriod, today } = usePeriodState(data, params.p)
+  const [modo] = useAgrupacion()
+  const { period, setPeriod, today } = usePeriodState(data, params.p, modo)
   const [cardId, setCardId] = useState<string>(params.card ?? 'all')
   const [personId, setPersonId] = useState<string>('all')
   const [vista, setVista] = useState<Vista>('resumen')
@@ -47,14 +58,20 @@ export default function Consumos() {
   )
 
   const rows = filtered
-    .map((e) => {
+    .flatMap((e) => {
       const card = cardById.get(e.cardId)
-      if (!card) return null
-      const inst = installmentIn(e, card, period, cot)
-      if (vista === 'resumen' && !inst) return null
-      return { e, card, inst }
+      if (!card) return []
+      // Resúmenes de la tarjeta que caen en el mes elegido (por vencimiento puede no haber o haber dos).
+      const periods = periodsIn(card, period, modo)
+      if (vista === 'resumen') {
+        return periods.flatMap((p) => {
+          const inst = installmentIn(e, card, p, cot)
+          return inst ? [{ e, card, p, inst }] : []
+        })
+      }
+      const p = periods[0] ?? period
+      return [{ e, card, p, inst: installmentIn(e, card, p, cot) }]
     })
-    .filter((r) => r !== null)
     .sort((a, b) => b.e.fecha.localeCompare(a.e.fecha))
 
   // Con una persona elegida, cada consumo vale solo la parte de esa persona.
@@ -92,7 +109,9 @@ export default function Consumos() {
       <Screen>
         {selector}
         <View style={{ height: space.md }} />
-        <SharedView period={period} setPeriod={setPeriod} today={today} />
+        <AgrupacionSwitch />
+        <View style={{ height: space.sm }} />
+        <SharedView period={period} setPeriod={setPeriod} today={today} modo={modo} />
       </Screen>
     )
   }
@@ -101,7 +120,13 @@ export default function Consumos() {
     <Screen fab={data.cards.length > 0 && <Fab label="Consumo" onPress={() => router.push('/consumo/nuevo')} />}>
       {selector}
       <View style={{ height: space.md }} />
-      {vista === 'resumen' && <PeriodNav value={period} onChange={setPeriod} today={today} caption="Mes de cierre del resumen" />}
+      {vista === 'resumen' && (
+        <>
+          <AgrupacionSwitch />
+          <View style={{ height: space.sm }} />
+          <PeriodNav value={period} onChange={setPeriod} today={today} caption={captionDe(modo)} />
+        </>
+      )}
 
       <View style={{ gap: space.sm, marginTop: space.md }}>
         <ChipSelect scroll options={cardOptions} value={cardId} onChange={setCardId} />
@@ -159,7 +184,7 @@ export default function Consumos() {
           const parcial = viewer ? shareOf(e, viewer) < 1 : myShare(e) < 1
           return (
             <ExpenseRow
-            key={e.id}
+            key={`${e.id}-${r.p}`}
             e={e}
             card={card}
             persona={
@@ -172,7 +197,7 @@ export default function Consumos() {
             cuota={inst ? (e.fijo ? 'Fijo' : `Cuota ${inst.nro}/${inst.de}`) : null}
             monto={shown(r)}
             nota={!parcial ? null : viewer ? `su parte de ${fmtMoney(full(r))}` : `mi parte ${fmtMoney(full(r) * myShare(e))}`}
-            detalle={vista === 'todos' ? statusText(e, card, period) : null}
+            detalle={vista === 'todos' ? statusText(e, card, r.p) : null}
           />
           )
         })}
@@ -180,6 +205,8 @@ export default function Consumos() {
     </Screen>
   )
 }
+
+const captionDe = (modo: Agrupacion) => (modo === 'vencimiento' ? 'Mes de vencimiento del resumen' : 'Mes de cierre del resumen')
 
 function statusText(e: CardExpense, card: Card, p: string) {
   const s = expenseStatus(e, card, p)
@@ -267,17 +294,27 @@ const styles = StyleSheet.create({
 })
 
 /** Consumos de otros usuarios donde participo: solo lectura, con mi parte. */
-function SharedView({ period, setPeriod, today }: { period: string; setPeriod: (p: string) => void; today: string }) {
+function SharedView({
+  period,
+  setPeriod,
+  today,
+  modo,
+}: {
+  period: string
+  setPeriod: (p: string) => void
+  today: string
+  modo: Agrupacion
+}) {
   const data = useData()
   const t = useTheme()
-  const deudas = sharedDebts(data, period)
+  const deudas = sharedDebts(data, period, modo)
   const total = deudas.reduce((a, d) => a + d.total, 0)
   const nombrePersona = (id: string) =>
     data.shared.myPersonIds.includes(id) ? 'vos' : (data.shared.people.find((p) => p.id === id)?.nombre ?? '?')
 
   return (
     <View style={{ gap: space.md }}>
-      <PeriodNav value={period} onChange={setPeriod} today={today} caption="Mes de cierre del resumen" />
+      <PeriodNav value={period} onChange={setPeriod} today={today} caption={captionDe(modo)} />
       <Panel>
         <Txt v="label" muted>
           Te toca pagar · {periodShort(period)}
@@ -294,8 +331,8 @@ function SharedView({ period, setPeriod, today }: { period: string; setPeriod: (
             <Txt v="h2">Le debés a {d.nombre}</Txt>
             <Txt v="money">{fmtMoney(d.total)}</Txt>
           </Row>
-          {d.lines.map(({ expense: e, card, inst, miParte }) => (
-            <View key={e.id} style={[styles.row, { backgroundColor: t.surface, borderColor: t.border, borderLeftColor: card.color }]}>
+          {d.lines.map(({ expense: e, card, period: p, inst, miParte }) => (
+            <View key={`${e.id}-${p}`} style={[styles.row, { backgroundColor: t.surface, borderColor: t.border, borderLeftColor: card.color }]}>
               <View style={{ flex: 1, gap: 3 }}>
                 <Txt style={{ fontWeight: '600' }} numberOfLines={1}>
                   {e.descripcion}
